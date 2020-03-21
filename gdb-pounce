@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+import argparse
+import ctypes
+import itertools
+import platform
+import subprocess
+import sys
+
+import bcc
+
+PROJECT = 'gdb-pounce'
+REQUIRED_SYSTEM = 'Linux'
+REQUIRED_RELEASE = '5.3'
+REQUIRED_BCC_VERSION = '0.11.0'
+TEXT = r'''#include <linux/sched.h>
+#include <uapi/linux/bpf.h>
+#include <uapi/linux/ptrace.h>
+#include <uapi/linux/signal.h>
+
+struct key {
+    u32 prefixlen;
+    char data[TASK_COMM_LEN];
+};
+
+struct __attribute__((__packed__)) event {
+    u32 pid;
+};
+
+BPF_LPM_TRIE(comms, struct key, u8);
+BPF_PERF_OUTPUT(events);
+
+int retprobe(struct pt_regs *ctx)
+{
+    struct key key;
+    size_t comm_len;
+    struct event event;
+
+    if (PT_REGS_RC(ctx) != 0)
+        return 0;
+
+    if (bpf_get_current_comm(key.data, sizeof(key.data)) != 0)
+        return 0;
+    for (comm_len = 0; comm_len < TASK_COMM_LEN; comm_len++)
+        if (key.data[comm_len] == 0)
+            break;
+    key.prefixlen = (comm_len + 1) * 8;
+    if (comms.lookup(&key) == NULL)
+        return 0;
+
+    bpf_send_signal(SIGSTOP);
+
+    event.pid = bpf_get_current_pid_tgid() >> 32;
+    events.perf_submit(ctx, &event, sizeof(event));
+
+    return 0;
+}
+'''
+
+TASK_COMM_LEN = 16
+COMM_T = ctypes.c_uint8 * TASK_COMM_LEN
+
+
+class Key(ctypes.Structure):
+    _fields_ = [
+        ('prefixlen', ctypes.c_uint32),
+        ('data', COMM_T),
+    ]
+
+
+def version_is_less(v1, v2):
+    for w1, w2 in itertools.zip_longest(
+            v1.split('.'),
+            v2.split('.'),
+            fillvalue='0',
+    ):
+        try:
+            w1, w2 = int(w1), int(w2)
+        except ValueError:
+            pass
+        if w1 < w2:
+            return True
+        elif w1 > w2:
+            return False
+    return False
+
+
+def check_system_requirements():
+    actual_system = platform.system()
+    if actual_system != REQUIRED_SYSTEM:
+        sys.stderr.write(f'{PROJECT} can only run on {REQUIRED_SYSTEM}, '
+                         f'but you have {actual_system}')
+        sys.exit(1)
+
+    actual_release = platform.release()
+    if version_is_less(actual_release, REQUIRED_RELEASE):
+        sys.stderr.write(f'Please upgrade kernel: you have {actual_release}, '
+                         f'but {PROJECT} requires {REQUIRED_RELEASE}\n')
+        sys.exit(1)
+
+    actual_bcc_version = bcc.__version__
+    if version_is_less(actual_bcc_version, REQUIRED_BCC_VERSION):
+        sys.stderr.write(f'Please upgrade bcc: you have {actual_bcc_version}, '
+                         f'but {PROJECT} requires {REQUIRED_BCC_VERSION}\n')
+        sys.exit(1)
+
+
+def main():
+    check_system_requirements()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('name', type=str, nargs='+')
+    args = parser.parse_args()
+
+    bpf = bcc.BPF(text=TEXT)
+    comms = bpf['comms']
+    for name in args.name:
+        name_bytes = name.encode() + b'\0'
+        key = Key(prefixlen=len(name_bytes) * 8, data=COMM_T(*name_bytes))
+        comms[key] = ctypes.c_uint8(0)
+    for syscall in ('execve', 'execveat'):
+        bpf.attach_kretprobe(
+            event=bpf.get_syscall_fnname(syscall),
+            fn_name='retprobe',
+        )
+    bpf_events = bpf['events']
+    events = []
+
+    def callback(cpu, data, size):
+        events.append(bpf_events.event(data))
+
+    bpf_events.open_perf_buffer(callback)
+    print('Running...')
+    while True:
+        bpf.perf_buffer_poll()
+        for event in events:
+            pid = event.pid
+            print(f'Attaching to pid {pid}...')
+            subprocess.Popen([
+                'gdb',
+                '-p', str(pid),
+            ])
+        events.clear()
+
+
+if __name__ == '__main__':
+    main()
