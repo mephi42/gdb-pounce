@@ -1,1 +1,4 @@
+build/
+dist/
+gdb_pounce.egg-info/
 .idea/

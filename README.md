@@ -1,3 +1,6 @@
+[![PyPI](https://img.shields.io/pypi/v/gdb-pounce)](
+https://pypi.python.org/pypi/gdb-pounce)
+
 # gdb-pounce
 
 Attach to a process precisely after a successful `execve()` / `execveat()`.
