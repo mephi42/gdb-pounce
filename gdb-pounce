@@ -162,7 +162,17 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
         for event in events:
             pid = event.pid
             print(f"Attaching to pid {pid}...", file=sys.stderr)
-            gdb_argv = ["gdb", "-p", str(pid)]
+            gdb_argv = [
+                "gdb",
+                "-p",
+                str(pid),
+                # When attaching to a SIGSTOPped process, gdb receives an event
+                # that indicates that the process got a SIGSTOP. It then passes
+                # this signal to the process after each resumption, making
+                # debugging impossible. Maybe this should be reported?
+                "-ex",
+                "handle SIGSTOP nostop noprint nopass",
+            ]
             if getattr(args, "async"):
                 subprocess.Popen(["x-terminal-emulator", "--"] + gdb_argv)
             else:
