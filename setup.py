@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="gdb-pounce",
-    version="0.0.1",
+    version="0.0.2",
     author="mephi42",
     author_email="mephi42@gmail.com",
     description="attach to a process precisely after a successful "
