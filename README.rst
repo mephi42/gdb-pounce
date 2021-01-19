@@ -12,7 +12,7 @@ Usage
 
 .. code-block::
 
-   sudo ./gdb-pounce COMM
+   sudo env "PATH=$PATH" gdb-pounce [NAME]...
 
 Prerequisites
 =============
