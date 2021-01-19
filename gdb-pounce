@@ -138,7 +138,7 @@ def main():
     parser.add_argument(
         "--async", action="store_true", help="allow multiple gdbs in separate terminals"
     )
-    args = parser.parse_args()
+    args, rest = parser.parse_known_args()
 
     try:
         bpf = bcc.BPF(text=TEXT)
@@ -194,7 +194,7 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
                 # debugging impossible. Maybe this should be reported?
                 "-ex",
                 "handle SIGSTOP nostop noprint nopass",
-            ]
+            ] + rest
             if getattr(args, "async"):
                 subprocess.Popen(["x-terminal-emulator", "--"] + gdb_argv)
             else:
