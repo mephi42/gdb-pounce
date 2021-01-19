@@ -156,7 +156,7 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
         events.append(bpf_events.event(data))
 
     bpf_events.open_perf_buffer(callback)
-    print("Running...", file=sys.stderr)
+    print("Running, press Ctrl+C to stop...", file=sys.stderr)
     while True:
         bpf.perf_buffer_poll()
         for event in events:
