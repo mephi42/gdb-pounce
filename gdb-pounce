@@ -2,9 +2,12 @@
 import argparse
 import ctypes
 import itertools
+import os
 import platform
+import shlex
 import subprocess
 import sys
+import traceback
 
 import bcc
 
@@ -83,25 +86,28 @@ def version_is_less(v1, v2):
 def check_system_requirements():
     actual_system = platform.system()
     if actual_system != REQUIRED_SYSTEM:
-        sys.stderr.write(
+        print(
             f"{PROJECT} can only run on {REQUIRED_SYSTEM}, "
-            f"but you have {actual_system}"
+            f"but you have {actual_system}",
+            file=sys.stderr,
         )
         sys.exit(1)
 
     actual_release = platform.release()
     if version_is_less(actual_release, REQUIRED_RELEASE):
-        sys.stderr.write(
+        print(
             f"Please upgrade kernel: you have {actual_release}, "
-            f"but {PROJECT} requires {REQUIRED_RELEASE}\n"
+            f"but {PROJECT} requires {REQUIRED_RELEASE}",
+            file=sys.stderr,
         )
         sys.exit(1)
 
     actual_bcc_version = bcc.__version__
     if version_is_less(actual_bcc_version, REQUIRED_BCC_VERSION):
-        sys.stderr.write(
+        print(
             f"Please upgrade bcc: you have {actual_bcc_version}, "
-            f"but {PROJECT} requires {REQUIRED_BCC_VERSION}\n"
+            f"but {PROJECT} requires {REQUIRED_BCC_VERSION}",
+            file=sys.stderr,
         )
         sys.exit(1)
 
@@ -113,7 +119,19 @@ def main():
     parser.add_argument("name", type=str, nargs="+")
     args = parser.parse_args()
 
-    bpf = bcc.BPF(text=TEXT)
+    try:
+        bpf = bcc.BPF(text=TEXT)
+    except Exception:
+        print(file=sys.stderr)
+        traceback.print_exc()
+        if os.getuid() != 0:
+            print(
+                f"""
+Are you root? Do you have CAP_SYS_ADMIN / CAP_BPF? Try this:
+sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
+                file=sys.stderr,
+            )
+        sys.exit(1)
     comms = bpf["comms"]
     for name in args.name:
         name_bytes = name.encode() + b"\0"
@@ -128,12 +146,12 @@ def main():
         events.append(bpf_events.event(data))
 
     bpf_events.open_perf_buffer(callback)
-    print("Running...")
+    print("Running...", file=sys.stderr)
     while True:
         bpf.perf_buffer_poll()
         for event in events:
             pid = event.pid
-            print(f"Attaching to pid {pid}...")
+            print(f"Attaching to pid {pid}...", file=sys.stderr)
             subprocess.Popen(["gdb", "-p", str(pid)])
         events.clear()
 
