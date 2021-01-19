@@ -8,11 +8,11 @@ import sys
 
 import bcc
 
-PROJECT = 'gdb-pounce'
-REQUIRED_SYSTEM = 'Linux'
-REQUIRED_RELEASE = '5.3'
-REQUIRED_BCC_VERSION = '0.11.0'
-TEXT = r'''#include <linux/sched.h>
+PROJECT = "gdb-pounce"
+REQUIRED_SYSTEM = "Linux"
+REQUIRED_RELEASE = "5.3"
+REQUIRED_BCC_VERSION = "0.11.0"
+TEXT = r"""#include <linux/sched.h>
 #include <uapi/linux/bpf.h>
 #include <uapi/linux/ptrace.h>
 #include <uapi/linux/signal.h>
@@ -54,7 +54,7 @@ int retprobe(struct pt_regs *ctx)
 
     return 0;
 }
-'''
+"""
 
 TASK_COMM_LEN = 16
 COMM_T = ctypes.c_uint8 * TASK_COMM_LEN
@@ -62,17 +62,13 @@ COMM_T = ctypes.c_uint8 * TASK_COMM_LEN
 
 class Key(ctypes.Structure):
     _fields_ = [
-        ('prefixlen', ctypes.c_uint32),
-        ('data', COMM_T),
+        ("prefixlen", ctypes.c_uint32),
+        ("data", COMM_T),
     ]
 
 
 def version_is_less(v1, v2):
-    for w1, w2 in itertools.zip_longest(
-            v1.split('.'),
-            v2.split('.'),
-            fillvalue='0',
-    ):
+    for w1, w2 in itertools.zip_longest(v1.split("."), v2.split("."), fillvalue="0"):
         try:
             w1, w2 = int(w1), int(w2)
         except ValueError:
@@ -87,20 +83,26 @@ def version_is_less(v1, v2):
 def check_system_requirements():
     actual_system = platform.system()
     if actual_system != REQUIRED_SYSTEM:
-        sys.stderr.write(f'{PROJECT} can only run on {REQUIRED_SYSTEM}, '
-                         f'but you have {actual_system}')
+        sys.stderr.write(
+            f"{PROJECT} can only run on {REQUIRED_SYSTEM}, "
+            f"but you have {actual_system}"
+        )
         sys.exit(1)
 
     actual_release = platform.release()
     if version_is_less(actual_release, REQUIRED_RELEASE):
-        sys.stderr.write(f'Please upgrade kernel: you have {actual_release}, '
-                         f'but {PROJECT} requires {REQUIRED_RELEASE}\n')
+        sys.stderr.write(
+            f"Please upgrade kernel: you have {actual_release}, "
+            f"but {PROJECT} requires {REQUIRED_RELEASE}\n"
+        )
         sys.exit(1)
 
     actual_bcc_version = bcc.__version__
     if version_is_less(actual_bcc_version, REQUIRED_BCC_VERSION):
-        sys.stderr.write(f'Please upgrade bcc: you have {actual_bcc_version}, '
-                         f'but {PROJECT} requires {REQUIRED_BCC_VERSION}\n')
+        sys.stderr.write(
+            f"Please upgrade bcc: you have {actual_bcc_version}, "
+            f"but {PROJECT} requires {REQUIRED_BCC_VERSION}\n"
+        )
         sys.exit(1)
 
 
@@ -108,39 +110,33 @@ def main():
     check_system_requirements()
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('name', type=str, nargs='+')
+    parser.add_argument("name", type=str, nargs="+")
     args = parser.parse_args()
 
     bpf = bcc.BPF(text=TEXT)
-    comms = bpf['comms']
+    comms = bpf["comms"]
     for name in args.name:
-        name_bytes = name.encode() + b'\0'
+        name_bytes = name.encode() + b"\0"
         key = Key(prefixlen=len(name_bytes) * 8, data=COMM_T(*name_bytes))
         comms[key] = ctypes.c_uint8(0)
-    for syscall in ('execve', 'execveat'):
-        bpf.attach_kretprobe(
-            event=bpf.get_syscall_fnname(syscall),
-            fn_name='retprobe',
-        )
-    bpf_events = bpf['events']
+    for syscall in ("execve", "execveat"):
+        bpf.attach_kretprobe(event=bpf.get_syscall_fnname(syscall), fn_name="retprobe")
+    bpf_events = bpf["events"]
     events = []
 
     def callback(cpu, data, size):
         events.append(bpf_events.event(data))
 
     bpf_events.open_perf_buffer(callback)
-    print('Running...')
+    print("Running...")
     while True:
         bpf.perf_buffer_poll()
         for event in events:
             pid = event.pid
-            print(f'Attaching to pid {pid}...')
-            subprocess.Popen([
-                'gdb',
-                '-p', str(pid),
-            ])
+            print(f"Attaching to pid {pid}...")
+            subprocess.Popen(["gdb", "-p", str(pid)])
         events.clear()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
