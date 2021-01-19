@@ -1,5 +1,8 @@
+import os
 import setuptools
 
+with open(os.path.join(os.path.dirname(__file__), "README.rst")) as fp:
+    long_description = fp.read()
 setuptools.setup(
     name="gdb-pounce",
     version="0.0.2",
@@ -16,4 +19,5 @@ setuptools.setup(
     ],
     python_requires=">=3.7",
     scripts=["gdb-pounce"],
+    long_description=long_description,
 )
