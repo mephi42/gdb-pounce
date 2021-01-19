@@ -5,6 +5,7 @@ import itertools
 import os
 import platform
 import shlex
+import signal
 import subprocess
 import sys
 import traceback
@@ -112,6 +113,16 @@ def check_system_requirements():
         sys.exit(1)
 
 
+class SigintHandler:
+    def __init__(self):
+        self.raise_keyboard_interrupt = True
+        signal.signal(signal.SIGINT, self)
+
+    def __call__(self, signum, frame):
+        if self.raise_keyboard_interrupt:
+            raise KeyboardInterrupt()
+
+
 def main():
     check_system_requirements()
 
@@ -156,6 +167,7 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
         events.append(bpf_events.event(data))
 
     bpf_events.open_perf_buffer(callback)
+    sigint_handler = SigintHandler()
     print("Running, press Ctrl+C to stop...", file=sys.stderr)
     while True:
         bpf.perf_buffer_poll()
@@ -176,7 +188,11 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
             if getattr(args, "async"):
                 subprocess.Popen(["x-terminal-emulator", "--"] + gdb_argv)
             else:
-                subprocess.call(gdb_argv)
+                sigint_handler.raise_keyboard_interrupt = False
+                try:
+                    subprocess.call(gdb_argv)
+                finally:
+                    sigint_handler.raise_keyboard_interrupt = True
         events.clear()
 
 
