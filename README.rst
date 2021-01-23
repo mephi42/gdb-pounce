@@ -5,18 +5,40 @@
 gdb-pounce
 ==========
 
-Attach to a process precisely after a successful ``execve()`` / ``execveat()``.
-
-Usage
-=====
+Wait until a process with a certain name starts and attach to it with ``gdb``.
+While for many use cases
 
 .. code-block::
 
-   sudo env "PATH=$PATH" gdb-pounce [NAME]...
+    while ! pidof $NAME; do :; done; gdb -p "$(pidof $NAME)"
+
+is enough, ``gdb-pounce`` will break right at the loader entry point, as if the
+process was started under ``gdb`` in the first place.
+
+When is this useful?
+====================
+
+When an interesting process (usually a part of some complex software) starts in
+a non-trivial environment, for example:
+
+- As a specific user.
+- In a specific namespace.
+- With additional environment variables.
+- With additional file descriptors.
+- While another process is in a specific state.
+
+and we need to debug its initialization.
+
+How do I use it?
+================
+
+.. code-block::
+
+   python3 -m pip install --user gdb-pounce
+   sudo env "PATH=$PATH" gdb-pounce [GDB OPTION]... [NAME]...
 
 Prerequisites
 =============
-
 
 * `bcc <https://github.com/iovisor/bcc>`_ ``>= 0.11.0``
 * `gdb <https://www.gnu.org/software/gdb/>`_
