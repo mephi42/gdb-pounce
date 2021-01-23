@@ -157,19 +157,32 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
         comms_map[key] = ctypes.c_uint8(0)
     for syscall in ("execve", "execveat"):
         bpf.attach_kretprobe(event=bpf.get_syscall_fnname(syscall), fn_name="retprobe")
-    bpf_events = bpf["events"]
-    events = []
+    pids = []
 
     def callback(cpu, data, size):
-        events.append(bpf_events.event(data))
+        # Do not put bpf["events"] into a variable, this will cause:
+        # Exception ignored in: <function PerfEventArray.__del__ at 0x7f55b11c2f70>
+        # Traceback (most recent call last):
+        #   File "/usr/lib/python3.8/site-packages/bcc/table.py", line 584, in __del__
+        #     del self[key]
+        #   File "/usr/lib/python3.8/site-packages/bcc/table.py", line 590, in __delitem__
+        #     super(PerfEventArray, self).__delitem__(key)
+        #   File "/usr/lib/python3.8/site-packages/bcc/table.py", line 493, in __delitem__
+        #     super(ArrayBase, self).__delitem__(key)
+        #   File "/usr/lib/python3.8/site-packages/bcc/table.py", line 262, in __delitem__
+        #     raise KeyError
+        # Report this to https://github.com/iovisor/bcc?
+        pids.append(bpf["events"].event(data).pid)
 
-    bpf_events.open_perf_buffer(callback)
+    bpf["events"].open_perf_buffer(callback)
     sigint_handler = SigintHandler()
     print("Running, press Ctrl+C to stop...", file=sys.stderr)
     while True:
-        bpf.perf_buffer_poll()
-        for event in events:
-            pid = event.pid
+        try:
+            bpf.perf_buffer_poll()
+        except KeyboardInterrupt:
+            sys.exit()
+        for pid in pids:
             try:
                 exe = os.readlink(f"/proc/{pid}/exe")
             except FileNotFoundError:
@@ -198,7 +211,7 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
                     subprocess.call(gdb_argv)
                 finally:
                     sigint_handler.raise_keyboard_interrupt = True
-        events.clear()
+        pids.clear()
 
 
 if __name__ == "__main__":
