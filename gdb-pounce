@@ -137,8 +137,16 @@ optional arguments:
     )
 
 
+def add_dashes(*names):
+    result = set()
+    for name in names:
+        result.add(f"-{name}")
+        result.add(f"--{name}")
+    return result
+
+
 # From gdb --help and man gdb.
-GDB_FLAGS = (
+GDB_FLAGS = add_dashes(
     "batch",
     "batch-silent",
     "configuration",
@@ -159,7 +167,7 @@ GDB_FLAGS = (
     "w",
     "write",
 )
-GDB_OPTIONS = (
+GDB_OPTIONS = add_dashes(
     "D",
     "b",
     "c",
@@ -194,44 +202,31 @@ def parse_argv():
     gdb_args = []
     i = 1
     while i < len(sys.argv):
-        if sys.argv[i] in ("-h", "--help"):
+        arg = sys.argv[i]
+        if arg in ("-h", "--help"):
             print_help(sys.stdout)
             sys.exit(0)
-        elif sys.argv[i] == "--async":
+        elif arg == "--async":
             async_ = True
             i += 1
-        elif any(
-            sys.argv[i] == f"-{flag}" or sys.argv[i] == f"--{flag}"
-            for flag in GDB_FLAGS
-        ):
-            gdb_args.append(sys.argv[i])
+        elif arg in GDB_FLAGS or ("=" in arg and arg[: arg.index("=")] in GDB_OPTIONS):
+            gdb_args.append(arg)
             i += 1
-        elif any(
-            sys.argv[i].startswith(f"-{option}=")
-            or sys.argv[i].startswith(f"--{option}=")
-            for option in GDB_OPTIONS
-        ):
-            gdb_args.append(sys.argv[i])
-            i += 1
-        elif any(
-            sys.argv[i] == f"-{option}" or sys.argv[i] == f"--{option}"
-            for option in GDB_OPTIONS
-        ):
+        elif arg in GDB_OPTIONS:
             if i + 2 > len(sys.argv):
                 print(
-                    f"""{sys.argv[0]}: option '{sys.argv[i]}' requires an argument
-    Use `{sys.argv[0]} --help' for a complete list of options.""",
+                    f"""{sys.argv[0]}: option '{arg}' requires an argument
+Use `{sys.argv[0]} --help' for a complete list of options.""",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            gdb_args.append(sys.argv[i])
+            gdb_args.append(arg)
             gdb_args.append(sys.argv[i + 1])
             i += 2
         else:
-            return async_, gdb_args, sys.argv[i], sys.argv[i + 1 :]
-    else:
-        print_help(sys.stderr)
-        sys.exit(1)
+            return async_, gdb_args, arg, sys.argv[i + 1 :]
+    print_help(sys.stderr)
+    sys.exit(1)
 
 
 def main():
