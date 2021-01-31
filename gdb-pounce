@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import ctypes
 import itertools
 import os
@@ -120,22 +119,129 @@ class SigintHandler:
             raise KeyboardInterrupt()
 
 
-TASK_COMM_LEN = 16
+def print_help(file):
+    print(
+        """usage: gdb-pounce [-h] [--async] [gdb_arg [gdb_arg ...]] name [arg [arg ...]]
+
+Attach gdb to a new process before it had a chance to run.
+
+positional arguments:
+  gdb_arg     gdb arguments
+  name        basename of an executable to wait for
+  arg         arguments to search in executable's cmdline
+
+optional arguments:
+  -h, --help  show this help message and exit
+  --async     allow multiple gdbs in separate terminals""",
+        file=file,
+    )
+
+
+# From gdb --help and man gdb.
+GDB_FLAGS = (
+    "batch",
+    "batch-silent",
+    "configuration",
+    "dbx",
+    "f",
+    "fullname",
+    "n",
+    "nh",
+    "nw",
+    "nx",
+    "q",
+    "quiet",
+    "readnever",
+    "readnow",
+    "return-child-result",
+    "silent",
+    "tui",
+    "w",
+    "write",
+)
+GDB_OPTIONS = (
+    "D",
+    "b",
+    "c",
+    "cd",
+    "command",
+    "core",
+    "core",
+    "d",
+    "data-directory",
+    "directory",
+    "e",
+    "eval-command",
+    "ex",
+    "exec",
+    "iex",
+    "init-command",
+    "init-eval-command",
+    "interpreter",
+    "ix",
+    "l",
+    "pid",
+    "s",
+    "se",
+    "symbols",
+    "tty",
+    "x",
+)
+
+
+def parse_argv():
+    async_ = False
+    gdb_args = []
+    i = 1
+    while i < len(sys.argv):
+        if sys.argv[i] in ("-h", "--help"):
+            print_help(sys.stdout)
+            sys.exit(0)
+        elif sys.argv[i] == "--async":
+            async_ = True
+            i += 1
+        elif any(
+            sys.argv[i] == f"-{flag}" or sys.argv[i] == f"--{flag}"
+            for flag in GDB_FLAGS
+        ):
+            gdb_args.append(sys.argv[i])
+            i += 1
+        elif any(
+            sys.argv[i].startswith(f"-{option}=")
+            or sys.argv[i].startswith(f"--{option}=")
+            for option in GDB_OPTIONS
+        ):
+            gdb_args.append(sys.argv[i])
+            i += 1
+        elif any(
+            sys.argv[i] == f"-{option}" or sys.argv[i] == f"--{option}"
+            for option in GDB_OPTIONS
+        ):
+            if i + 2 > len(sys.argv):
+                print(
+                    f"""{sys.argv[0]}: option '{sys.argv[i]}' requires an argument
+    Use `{sys.argv[0]} --help' for a complete list of options.""",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            gdb_args.append(sys.argv[i])
+            gdb_args.append(sys.argv[i + 1])
+            i += 2
+        else:
+            return async_, gdb_args, sys.argv[i], sys.argv[i + 1 :]
+    else:
+        print_help(sys.stderr)
+        sys.exit(1)
 
 
 def main():
     check_system_requirements()
 
-    parser = argparse.ArgumentParser(
-        description="Attach gdb to a new process before it had a chance to run."
-    )
-    parser.add_argument(
-        "name", type=str, nargs="+", help="basename of an executable to wait for"
-    )
-    parser.add_argument(
-        "--async", action="store_true", help="allow multiple gdbs in separate terminals"
-    )
-    args, rest = parser.parse_known_args()
+    async_, gdb_args, name, args = parse_argv()
+
+    cmdline_needle = b"\0"
+    for arg in args:
+        cmdline_needle += arg.encode() + b"\0"
 
     try:
         bpf = bcc.BPF(text=TEXT)
@@ -151,10 +257,9 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
             )
         sys.exit(1)
     comms_map = bpf["comms"]
-    for name in args.name:
-        comm_bytes = name[: TASK_COMM_LEN - 1].encode() + b"\0"
-        key = Key(prefixlen=len(comm_bytes) * 8, data=COMM_T(*comm_bytes))
-        comms_map[key] = ctypes.c_uint8(0)
+    comm_bytes = name[: TASK_COMM_LEN - 1].encode() + b"\0"
+    key = Key(prefixlen=len(comm_bytes) * 8, data=COMM_T(*comm_bytes))
+    comms_map[key] = ctypes.c_uint8(0)
     for syscall in ("execve", "execveat"):
         bpf.attach_kretprobe(event=bpf.get_syscall_fnname(syscall), fn_name="retprobe")
     pids = []
@@ -185,14 +290,16 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
         for pid in pids:
             try:
                 exe = os.readlink(f"/proc/{pid}/exe")
+                with open(f"/proc/{pid}/cmdline", "rb") as cmdline_fp:
+                    cmdline = cmdline_fp.read()
             except FileNotFoundError:
                 print(f"Skipping nonexistent pid {pid}...", file=sys.stderr)
                 continue
-            if os.path.basename(exe) not in args.name:
+            cmdline = cmdline[cmdline.index(b"\0") :]
+            if os.path.basename(exe) != name or cmdline_needle not in cmdline:
                 print(f"Skipping non-matching pid {pid}...", file=sys.stderr)
                 os.kill(pid, signal.SIGCONT)
                 continue
-            print(f"Attaching to pid {pid}...", file=sys.stderr)
             gdb_argv = [
                 "gdb",
                 "-p",
@@ -203,8 +310,10 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
                 # debugging impossible. Maybe this should be reported?
                 "-ex",
                 "handle SIGSTOP nostop noprint nopass",
-            ] + rest
-            if getattr(args, "async"):
+            ] + gdb_args
+            gdb_cmdline = " ".join(shlex.quote(gdb_arg) for gdb_arg in gdb_argv)
+            print(f"Starting {gdb_cmdline}...", file=sys.stderr)
+            if async_:
                 subprocess.Popen(["x-terminal-emulator", "--"] + gdb_argv)
             else:
                 sigint_handler.raise_keyboard_interrupt = False
@@ -212,6 +321,7 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
                     subprocess.call(gdb_argv)
                 finally:
                     sigint_handler.raise_keyboard_interrupt = True
+            print(f"GDB exited.", file=sys.stderr)
         pids.clear()
 
 

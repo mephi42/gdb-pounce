@@ -10,10 +10,10 @@ While for many use cases
 
 .. code-block::
 
-    while ! pidof $NAME; do :; done; gdb -p "$(pidof $NAME)"
+    while ! pidof "$NAME"; do :; done; gdb -p "$(pidof "$NAME")"
 
-is enough, ``gdb-pounce`` will break right at the loader entry point, as if the
-process was started under ``gdb`` in the first place.
+is sufficient, ``gdb-pounce`` will stop right at the loader entry point, as if
+the process was started under ``gdb`` in the first place.
 
 When is this useful?
 ====================
@@ -35,7 +35,7 @@ How do I use it?
 .. code-block::
 
    python3 -m pip install --user gdb-pounce
-   sudo env "PATH=$PATH" gdb-pounce [GDB OPTION]... [NAME]...
+   sudo env "PATH=$PATH" gdb-pounce [GDB OPTION]... [NAME]
 
 Prerequisites
 =============
