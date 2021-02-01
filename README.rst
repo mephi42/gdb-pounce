@@ -15,6 +15,14 @@ While for many use cases
 is sufficient, ``gdb-pounce`` will stop right at the loader entry point, as if
 the process was started under ``gdb`` in the first place.
 
+Usage
+=====
+
+.. code-block::
+
+   python3 -m pip install --upgrade --user gdb-pounce
+   sudo env "PATH=$PATH" gdb-pounce [GDB OPTION]... [NAME]
+
 When is this useful?
 ====================
 
@@ -28,14 +36,6 @@ a non-trivial environment, for example:
 - While another process is in a specific state.
 
 and we need to debug its initialization.
-
-How do I use it?
-================
-
-.. code-block::
-
-   python3 -m pip install --user gdb-pounce
-   sudo env "PATH=$PATH" gdb-pounce [GDB OPTION]... [NAME]
 
 Prerequisites
 =============

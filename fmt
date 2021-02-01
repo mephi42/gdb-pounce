@@ -1,0 +1,7 @@
+#!/bin/bash
+set -e -u -x -o pipefail
+py=(gdb-pounce setup.py test/test.py)
+c=(test/hello.c)
+isort "${py[@]}"
+black "${py[@]}"
+clang-format -i "${c[@]}"

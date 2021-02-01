@@ -28,19 +28,17 @@ struct key {
 
 struct __attribute__((__packed__)) event {
     u32 pid;
+    int bpf_send_signal_ret;
 };
 
 BPF_LPM_TRIE(comms, struct key, u8);
 BPF_PERF_OUTPUT(events);
 
-int retprobe(struct pt_regs *ctx)
+static int maybe_pounce(struct pt_regs *ctx)
 {
     struct key key;
     size_t comm_len;
     struct event event;
-
-    if (PT_REGS_RC(ctx) != 0)
-        return 0;
 
     if (bpf_get_current_comm(key.data, sizeof(key.data)) != 0)
         return 0;
@@ -51,12 +49,25 @@ int retprobe(struct pt_regs *ctx)
     if (comms.lookup(&key) == NULL)
         return 0;
 
-    bpf_send_signal(SIGSTOP);
+    event.bpf_send_signal_ret = bpf_send_signal(SIGSTOP);
 
     event.pid = bpf_get_current_pid_tgid() >> 32;
     events.perf_submit(ctx, &event, sizeof(event));
 
     return 0;
+}
+
+int exec_retprobe(struct pt_regs *ctx)
+{
+    if (PT_REGS_RC(ctx) != 0)
+        return 0;
+
+    return maybe_pounce(ctx);
+}
+
+int schedule_tail_retprobe(struct pt_regs *ctx)
+{
+    return maybe_pounce(ctx);
 }
 """
 
@@ -134,6 +145,7 @@ positional arguments:
 optional arguments:
   -h, --help  show this help message and exit
   --async     allow multiple gdbs in separate terminals
+  --fork      match fork()ed instead of execve()d processes
   --uid=UID   match only processes with the specified real user id""",
         file=file,
     )
@@ -219,6 +231,7 @@ def resolve_uid(s):
 
 def parse_argv():
     async_ = False
+    fork = False
     uid = None
     gdb_args = []
     i = 1
@@ -229,6 +242,9 @@ def parse_argv():
             sys.exit(0)
         elif arg == "--async":
             async_ = True
+            i += 1
+        elif arg == "--fork":
+            fork = True
             i += 1
         elif arg.startswith("--uid="):
             uid = resolve_uid(arg[6:])
@@ -244,7 +260,7 @@ def parse_argv():
             gdb_args.append(get_val(i))
             i += 2
         else:
-            return async_, uid, gdb_args, arg, sys.argv[i + 1 :]
+            return async_, fork, uid, gdb_args, arg, sys.argv[i + 1 :]
     print_help(sys.stderr)
     sys.exit(1)
 
@@ -252,7 +268,7 @@ def parse_argv():
 def main():
     check_system_requirements()
 
-    async_, uid, gdb_args, name, args = parse_argv()
+    async_, fork, uid, gdb_args, name, args = parse_argv()
 
     cmdline_needle = b"\0"
     for arg in args:
@@ -275,8 +291,14 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
     comm_bytes = name[: TASK_COMM_LEN - 1].encode() + b"\0"
     key = Key(prefixlen=len(comm_bytes) * 8, data=COMM_T(*comm_bytes))
     comms_map[key] = ctypes.c_uint8(0)
-    for syscall in ("execve", "execveat"):
-        bpf.attach_kretprobe(event=bpf.get_syscall_fnname(syscall), fn_name="retprobe")
+    if fork:
+        # schedule_tail - first thing a freshly forked thread must call.
+        bpf.attach_kretprobe(event="schedule_tail", fn_name="schedule_tail_retprobe")
+    else:
+        for syscall in ("execve", "execveat"):
+            bpf.attach_kretprobe(
+                event=bpf.get_syscall_fnname(syscall), fn_name="exec_retprobe"
+            )
     pids = []
 
     def callback(cpu, data, size):
@@ -292,7 +314,15 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
         #   File "/usr/lib/python3.8/site-packages/bcc/table.py", line 262, in __delitem__
         #     raise KeyError
         # Report this to https://github.com/iovisor/bcc?
-        pids.append(bpf["events"].event(data).pid)
+        event = bpf["events"].event(data)
+        if event.bpf_send_signal_ret == 0:
+            pids.append(event.pid)
+        else:
+            print(
+                f"Skipping pid {event.pid}, because it could not be stopped"
+                f" ({event.bpf_send_signal_ret})...",
+                file=sys.stderr,
+            )
 
     bpf["events"].open_perf_buffer(callback)
     sigint_handler = SigintHandler()
