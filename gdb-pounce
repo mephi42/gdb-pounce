@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import traceback
+from pwd import getpwnam
 
 import bcc
 
@@ -121,7 +122,7 @@ class SigintHandler:
 
 def print_help(file):
     print(
-        """usage: gdb-pounce [-h] [--async] [gdb_arg [gdb_arg ...]] name [arg [arg ...]]
+        """usage: gdb-pounce [options] [gdb_arg [gdb_arg ...]] name [arg [arg ...]]
 
 Attach gdb to a new process before it had a chance to run.
 
@@ -132,7 +133,8 @@ positional arguments:
 
 optional arguments:
   -h, --help  show this help message and exit
-  --async     allow multiple gdbs in separate terminals""",
+  --async     allow multiple gdbs in separate terminals
+  --uid=UID   match only processes with the specified real user id""",
         file=file,
     )
 
@@ -197,8 +199,27 @@ GDB_OPTIONS = add_dashes(
 )
 
 
+def get_val(i):
+    if i + 2 > len(sys.argv):
+        print(
+            f"""{sys.argv[0]}: option '{sys.argv[i]}' requires an argument
+Use `{sys.argv[0]} --help' for a complete list of options.""",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return sys.argv[i + 1]
+
+
+def resolve_uid(s):
+    try:
+        return int(s)
+    except ValueError:
+        return getpwnam(s)[2]
+
+
 def parse_argv():
     async_ = False
+    uid = None
     gdb_args = []
     i = 1
     while i < len(sys.argv):
@@ -209,22 +230,21 @@ def parse_argv():
         elif arg == "--async":
             async_ = True
             i += 1
+        elif arg.startswith("--uid="):
+            uid = resolve_uid(arg[6:])
+            i += 1
+        elif arg == "--uid":
+            uid = resolve_uid(get_val(i))
+            i += 2
         elif arg in GDB_FLAGS or ("=" in arg and arg[: arg.index("=")] in GDB_OPTIONS):
             gdb_args.append(arg)
             i += 1
         elif arg in GDB_OPTIONS:
-            if i + 2 > len(sys.argv):
-                print(
-                    f"""{sys.argv[0]}: option '{arg}' requires an argument
-Use `{sys.argv[0]} --help' for a complete list of options.""",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
             gdb_args.append(arg)
-            gdb_args.append(sys.argv[i + 1])
+            gdb_args.append(get_val(i))
             i += 2
         else:
-            return async_, gdb_args, arg, sys.argv[i + 1 :]
+            return async_, uid, gdb_args, arg, sys.argv[i + 1 :]
     print_help(sys.stderr)
     sys.exit(1)
 
@@ -232,7 +252,7 @@ Use `{sys.argv[0]} --help' for a complete list of options.""",
 def main():
     check_system_requirements()
 
-    async_, gdb_args, name, args = parse_argv()
+    async_, uid, gdb_args, name, args = parse_argv()
 
     cmdline_needle = b"\0"
     for arg in args:
@@ -287,11 +307,16 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
                 exe = os.readlink(f"/proc/{pid}/exe")
                 with open(f"/proc/{pid}/cmdline", "rb") as cmdline_fp:
                     cmdline = cmdline_fp.read()
+                st = os.stat(f"/proc/{pid}")
             except FileNotFoundError:
                 print(f"Skipping nonexistent pid {pid}...", file=sys.stderr)
                 continue
             cmdline = cmdline[cmdline.index(b"\0") :]
-            if os.path.basename(exe) != name or cmdline_needle not in cmdline:
+            if (
+                os.path.basename(exe) != name
+                or cmdline_needle not in cmdline
+                or (uid is not None and st.st_uid != uid)
+            ):
                 print(f"Skipping non-matching pid {pid}...", file=sys.stderr)
                 os.kill(pid, signal.SIGCONT)
                 continue

@@ -2,6 +2,7 @@
 import os
 import signal
 from contextlib import contextmanager
+from pwd import getpwuid
 from shutil import copy, rmtree
 from subprocess import PIPE, Popen, TimeoutExpired, check_call
 from tempfile import mkdtemp
@@ -29,10 +30,23 @@ class GdbPounceTestCase(TestCase):
 
     def expect_line(self, fp, exp):
         for line in fp:
+            print((line, exp))
             if line == exp:
                 break
         else:
             self.fail()
+
+    def expect_line_starting(self, gdb_pounce, gdb_args, exe):
+        self.expect_line(
+            gdb_pounce.stderr,
+            f"Starting gdb -p {exe.pid} {GDB_ARGS} {gdb_args}...\n".encode(),
+        )
+
+    def expect_skip_non_matching(self, gdb_pounce, exe):
+        self.expect_line(
+            gdb_pounce.stderr,
+            f"Skipping non-matching pid {exe.pid}...\n".encode(),
+        )
 
     @contextmanager
     def popen_gdb_pounce(self, args):
@@ -72,10 +86,7 @@ class GdbPounceTestCase(TestCase):
         try:
             with self.popen_gdb_pounce(["A" * (TASK_COMM_LEN - 1)]) as gdb_pounce:
                 exe = Popen([exe_path], stdout=PIPE)
-                self.expect_line(
-                    gdb_pounce.stderr,
-                    f"Skipping non-matching pid {exe.pid}...\n".encode(),
-                )
+                self.expect_skip_non_matching(gdb_pounce, exe)
                 try:
                     self.assertEqual(HELLO_WORLD, exe.stdout.read())
                 finally:
@@ -85,25 +96,34 @@ class GdbPounceTestCase(TestCase):
             os.unlink(exe_path)
 
     def test_matching_argv(self):
-        with self.popen_gdb_pounce(
-            ["-nx", "-batch", "-ex", "c", "-ex", "q", "hello", "bar"]
-        ) as gdb_pounce:
+        gdb_args = ["-nx", "-batch", "-ex", "c", "-ex", "q"]
+        gdb_args_str = "-nx -batch -ex c -ex q"
+        with self.popen_gdb_pounce(gdb_args + ["hello", "bar"]) as gdb_pounce:
             with self.popen_hello(["foo", "bar", "baz"]) as exe:
-                self.expect_line(
-                    gdb_pounce.stderr,
-                    f"Starting gdb -p {exe.pid} {GDB_ARGS} -nx -batch -ex c -ex q...\n".encode(),
-                )
+                self.expect_line_starting(gdb_pounce, gdb_args_str, exe)
             self.expect_line(gdb_pounce.stderr, b"GDB exited.\n")
 
     def test_non_matching_argv(self):
-        with self.popen_gdb_pounce(
-            ["-nx", "-batch", "-ex", "c", "-ex", "q", "hello", "quux"]
-        ) as gdb_pounce:
+        with self.popen_gdb_pounce(["hello", "quux"]) as gdb_pounce:
             with self.popen_hello(["foo", "bar", "baz"]) as exe:
-                self.expect_line(
-                    gdb_pounce.stderr,
-                    f"Skipping non-matching pid {exe.pid}...\n".encode(),
-                )
+                self.expect_skip_non_matching(gdb_pounce, exe)
+
+    def test_matching_uid(self):
+        gdb_args = ["-nx", "-batch", "-ex", "c", "-ex", "q"]
+        gdb_args_str = "-nx -batch -ex c -ex q"
+        with self.popen_gdb_pounce(
+            [f"--uid={getpwuid(os.getuid())[0]}"] + gdb_args + ["hello"]
+        ) as gdb_pounce:
+            with self.popen_hello([]) as exe:
+                self.expect_line_starting(gdb_pounce, gdb_args_str, exe)
+            self.expect_line(gdb_pounce.stderr, b"GDB exited.\n")
+
+    def test_non_matching_uid(self):
+        with self.popen_gdb_pounce(
+            ["--uid", str(os.getuid() + 1), "hello"]
+        ) as gdb_pounce:
+            with self.popen_hello([]) as exe:
+                self.expect_skip_non_matching(gdb_pounce, exe)
 
 
 if __name__ == "__main__":
