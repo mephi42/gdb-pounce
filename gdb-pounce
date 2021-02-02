@@ -82,6 +82,11 @@ int exec_retprobe(struct pt_regs *ctx)
 
 int schedule_tail_retprobe(struct pt_regs *ctx)
 {
+    u64 current_pid_tgid = bpf_get_current_pid_tgid();
+
+    if ((current_pid_tgid & 0xFFFFFFFF) != (current_pid_tgid >> 32))
+        return 0;
+
     return maybe_pounce(ctx);
 }
 """

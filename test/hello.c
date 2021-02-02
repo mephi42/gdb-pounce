@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,11 +6,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+void *thread_func(void *arg) { puts("Hello, Thread!"); }
+
 int main(int argc, char **argv) {
   int do_fork = 0;
+  int do_thread = 0;
   for (int i = 0; i < argc; i++) {
     if (strcmp(argv[i], "--fork") == 0)
       do_fork = 1;
+    if (strcmp(argv[i], "--thread") == 0)
+      do_thread = 1;
   }
   puts("Hello, World!");
   if (do_fork) {
@@ -26,6 +32,15 @@ int main(int argc, char **argv) {
     if (pid_again != pid)
       abort();
     if (wstatus != 0)
+      abort();
+  }
+  if (do_thread) {
+    pthread_t thread;
+    int ret = pthread_create(&thread, NULL, &thread_func, NULL);
+    if (ret != 0)
+      abort();
+    ret = pthread_join(thread, NULL);
+    if (ret != 0)
       abort();
   }
 }

@@ -13,6 +13,7 @@ TASK_COMM_LEN = 16
 RUNNING = b"Running, press Ctrl+C to stop...\n"
 HELLO_WORLD = b"Hello, World!\n"
 HELLO_FORK = b"Hello, Fork!\n"
+HELLO_THREAD = b"Hello, Thread!\n"
 GDB_ARGS_STR = "-ex 'handle SIGSTOP nostop noprint nopass'"
 TEST_GDB_ARGS = ["-nx", "-batch", "-ex", "c", "-ex", "q"]
 TEST_GDB_ARGS_STR = "-nx -batch -ex c -ex q"
@@ -26,7 +27,7 @@ class GdbPounceTestCase(TestCase):
         cls.gdb_pounce = os.path.join(cls.basedir, "..", "gdb-pounce")
         cls.workdir = mkdtemp()
         cls.hello = os.path.join(cls.workdir, "hello")
-        check_call(["cc", "-o", cls.hello, cls.hello_c])
+        check_call(["cc", "-o", cls.hello, cls.hello_c, "-pthread"])
 
     @classmethod
     def tearDownClass(cls):
@@ -79,8 +80,14 @@ class GdbPounceTestCase(TestCase):
             gdb_pounce.stderr.close()
 
     @contextmanager
-    def popen_hello(self, args, fork=False):
-        exe = Popen([self.hello] + (["--fork"] if fork else []) + args, stdout=PIPE)
+    def popen_hello(self, args, fork=False, thread=False):
+        exe = Popen(
+            [self.hello]
+            + (["--fork"] if fork else [])
+            + (["--thread"] if thread else [])
+            + args,
+            stdout=PIPE,
+        )
         try:
             yield exe
         finally:
@@ -88,6 +95,8 @@ class GdbPounceTestCase(TestCase):
                 exp = HELLO_WORLD
                 if fork:
                     exp += HELLO_FORK
+                if thread:
+                    exp += HELLO_THREAD
                 self.assertEqual(exp, exe.stdout.read())
             finally:
                 self.assertEqual(0, exe.wait())
@@ -151,6 +160,11 @@ class GdbPounceTestCase(TestCase):
                 (forked_pid_str,) = m.groups()
                 self.assertNotEqual(int(forked_pid_str), exe.pid)
                 self.expect_line(gdb_pounce.stderr, b"GDB exited.\n")
+
+    def test_thread(self):
+        with self.popen_gdb_pounce(["--fork", "hello"]):
+            with self.popen_hello([], thread=True):
+                pass
 
 
 if __name__ == "__main__":
