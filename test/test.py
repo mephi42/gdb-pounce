@@ -50,10 +50,10 @@ class GdbPounceTestCase(TestCase):
             f"Starting gdb -p {exe.pid} {GDB_ARGS_STR} {gdb_args_str}...\n".encode(),
         )
 
-    def expect_skip_non_matching(self, gdb_pounce, exe):
+    def expect_skip_non_matching(self, gdb_pounce, exe, filtered_by):
         self.expect_line(
             gdb_pounce.stderr,
-            f"Skipping non-matching pid {exe.pid}...\n".encode(),
+            f"Skipping non-matching pid {exe.pid} (filtered by {filtered_by})...\n".encode(),
         )
 
     def expect_gdb_exited(self, gdb_pounce):
@@ -102,13 +102,13 @@ class GdbPounceTestCase(TestCase):
                 self.assertEqual(0, exe.wait())
                 exe.stdout.close()
 
-    def test_collision(self):
+    def test_comm_collision(self):
         exe_path = os.path.join(self.workdir, "A" * TASK_COMM_LEN)
         copy(self.hello, exe_path)
         try:
             with self.popen_gdb_pounce(["A" * (TASK_COMM_LEN - 1)]) as gdb_pounce:
                 exe = Popen([exe_path], stdout=PIPE)
-                self.expect_skip_non_matching(gdb_pounce, exe)
+                self.expect_skip_non_matching(gdb_pounce, exe, "Python")
                 try:
                     self.assertEqual(HELLO_WORLD, exe.stdout.read())
                 finally:
@@ -123,10 +123,21 @@ class GdbPounceTestCase(TestCase):
                 self.expect_starting(gdb_pounce, TEST_GDB_ARGS_STR, exe)
             self.expect_gdb_exited(gdb_pounce)
 
+    def test_fully_matching_argv(self):
+        with self.popen_gdb_pounce(TEST_GDB_ARGS + ["hello", "A" * 2000]) as gdb_pounce:
+            with self.popen_hello(["A" * 2000]) as exe:
+                self.expect_starting(gdb_pounce, TEST_GDB_ARGS_STR, exe)
+            self.expect_gdb_exited(gdb_pounce)
+
     def test_non_matching_argv(self):
         with self.popen_gdb_pounce(["hello", "quux"]) as gdb_pounce:
             with self.popen_hello(["foo", "bar", "baz"]) as exe:
-                self.expect_skip_non_matching(gdb_pounce, exe)
+                self.expect_skip_non_matching(gdb_pounce, exe, "BPF")
+
+    def test_argv_collision(self):
+        with self.popen_gdb_pounce(["hello", "quux", "xyzzy"]) as gdb_pounce:
+            with self.popen_hello(["quzzy", "xyux"]) as exe:
+                self.expect_skip_non_matching(gdb_pounce, exe, "Python")
 
     def test_matching_uid(self):
         with self.popen_gdb_pounce(
@@ -141,7 +152,7 @@ class GdbPounceTestCase(TestCase):
             ["--uid", str(os.getuid() + 1), "hello"]
         ) as gdb_pounce:
             with self.popen_hello([]) as exe:
-                self.expect_skip_non_matching(gdb_pounce, exe)
+                self.expect_skip_non_matching(gdb_pounce, exe, "BPF")
 
     def test_fork(self):
         with self.popen_gdb_pounce(

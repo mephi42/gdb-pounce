@@ -32,9 +32,60 @@ struct __attribute__((__packed__)) event {
     int bpf_send_signal_ret;
 };
 
+#define XARG_MAX 2500
+
 BPF_ARRAY(uid_map, u32, 1);
 BPF_LPM_TRIE(comms_map, struct key, u8);
+BPF_ARRAY(cmdline_hash_map, u64, 1);
+BPF_ARRAY(cmdline_len_map, u32, 1);
 BPF_PERF_OUTPUT(events);
+
+static bool cmdline_may_match()
+{
+    const char __user *arg_start;
+    const char __user *arg_end;
+    struct task_struct *t;
+    struct mm_struct *mm;
+    unsigned char c = 0;
+    u64 *cmdline_hash;
+    u32 *cmdline_len;
+    u64 hash = 0;
+    int zero = 0;
+    int len;
+    int i;
+
+    cmdline_hash = cmdline_hash_map.lookup(&zero);
+    if (cmdline_hash == NULL)
+        return true;
+    cmdline_len = cmdline_len_map.lookup(&zero);
+    if (cmdline_len == NULL || *cmdline_len > XARG_MAX)
+        return true;
+    t = (struct task_struct *)bpf_get_current_task();
+    if (bpf_probe_read(&mm, sizeof(mm), &t->mm) != 0)
+        return true;
+    if (bpf_probe_read(&arg_start, sizeof(arg_start), &mm->arg_start) != 0)
+        return true;
+    if (bpf_probe_read(&arg_end, sizeof(arg_end), &mm->arg_end) != 0)
+        return true;
+    if (arg_end < arg_start)
+        return true;
+    len = arg_end - arg_start;
+    if (len > XARG_MAX)
+        return true;
+
+    for (i = 0; i < len && i < XARG_MAX; i++) {
+        if (i >= *cmdline_len) {
+            bpf_probe_read(&c, 1, arg_start + i - *cmdline_len);
+            hash -= c;
+        }
+        bpf_probe_read(&c, 1, arg_start + i);
+        hash += c;
+        if (hash == *cmdline_hash)
+            return true;
+    }
+
+    return false;
+}
 
 static int maybe_pounce(struct pt_regs *ctx)
 {
@@ -61,8 +112,12 @@ static int maybe_pounce(struct pt_regs *ctx)
     if (uid != NULL && *uid != 0xFFFFFFFF) {
         u32 current_uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
 
-        if (current_uid != *uid) goto submit;
+        if (current_uid != *uid)
+            goto submit;
     }
+
+    if (!cmdline_may_match())
+        goto submit;
 
     event.skipped = 0;
     event.bpf_send_signal_ret = bpf_send_signal(SIGSTOP);
@@ -285,8 +340,11 @@ def parse_argv():
     sys.exit(1)
 
 
-def print_skip_non_matching(pid):
-    print(f"Skipping non-matching pid {pid}...", file=sys.stderr)
+def print_skip_non_matching(pid, filtered_by):
+    print(
+        f"Skipping non-matching pid {pid} (filtered by {filtered_by})...",
+        file=sys.stderr,
+    )
 
 
 def main():
@@ -312,10 +370,11 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
             )
         sys.exit(1)
     bpf["uid_map"][0] = ctypes.c_uint32(0xFFFFFFFF if uid is None else uid)
-    comms_map = bpf["comms_map"]
     comm_bytes = name[: TASK_COMM_LEN - 1].encode() + b"\0"
     key = Key(prefixlen=len(comm_bytes) * 8, data=COMM_T(*comm_bytes))
-    comms_map[key] = ctypes.c_uint8(0)
+    bpf["comms_map"][key] = ctypes.c_uint8(0)
+    bpf["cmdline_len_map"][0] = ctypes.c_uint32(len(cmdline_needle))
+    bpf["cmdline_hash_map"][0] = ctypes.c_uint64(sum(cmdline_needle))
     if fork:
         # schedule_tail - first thing a freshly forked thread must call.
         bpf.attach_kretprobe(event="schedule_tail", fn_name="schedule_tail_retprobe")
@@ -341,7 +400,7 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
         # Report this to https://github.com/iovisor/bcc?
         event = bpf["events"].event(data)
         if event.skipped:
-            print_skip_non_matching(event.pid)
+            print_skip_non_matching(event.pid, "BPF")
         elif event.bpf_send_signal_ret == 0:
             pids.append(event.pid)
         else:
@@ -369,7 +428,7 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
                 continue
             cmdline = cmdline[cmdline.index(b"\0") :]
             if os.path.basename(exe) != name or cmdline_needle not in cmdline:
-                print_skip_non_matching(pid)
+                print_skip_non_matching(pid, "Python")
                 os.kill(pid, signal.SIGCONT)
                 continue
             gdb_argv = [
