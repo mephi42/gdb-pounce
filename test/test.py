@@ -59,11 +59,18 @@ class GdbPounceTestCase(TestCase):
     def expect_gdb_exited(self, gdb_pounce):
         self.expect_line(gdb_pounce.stderr, b"GDB exited.\n")
 
+    def expect_strace_exited(self, gdb_pounce):
+        self.expect_line(gdb_pounce.stderr, b"strace exited.\n")
+
     @contextmanager
-    def popen_gdb_pounce(self, args):
+    def popen_gdb_pounce(self, args, strace=False):
         env = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"
-        gdb_pounce = Popen([self.gdb_pounce] + args, stderr=PIPE, env=env)
+        gdb_pounce = Popen(
+            [self.gdb_pounce] + (["--strace"] if strace else []) + args,
+            stderr=PIPE,
+            env=env,
+        )
         try:
             self.expect_line(gdb_pounce.stderr, RUNNING)
             yield gdb_pounce
@@ -176,6 +183,13 @@ class GdbPounceTestCase(TestCase):
         with self.popen_gdb_pounce(["--fork", "hello"]):
             with self.popen_hello([], thread=True):
                 pass
+
+    def test_strace(self):
+        with self.popen_gdb_pounce(["hello"], strace=True) as gdb_pounce:
+            with self.popen_hello([]):
+                self.expect_line(gdb_pounce.stderr, b"--- stopped by SIGSTOP ---\n")
+                self.expect_line(gdb_pounce.stderr, b"+++ exited with 0 +++\n")
+                self.expect_strace_exited(gdb_pounce)
 
 
 if __name__ == "__main__":

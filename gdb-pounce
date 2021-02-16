@@ -8,7 +8,9 @@ import signal
 import subprocess
 import sys
 import traceback
+from dataclasses import dataclass, field
 from pwd import getpwnam
+from typing import Any, List, Tuple
 
 import bcc
 
@@ -221,6 +223,7 @@ optional arguments:
   -h, --help  show this help message and exit
   --async     allow multiple gdbs in separate terminals
   --fork      match fork()ed instead of execve()d processes
+  --strace    use strace instead of gdb
   --uid=UID   match only processes with the specified real user id""",
         file=file,
     )
@@ -234,56 +237,171 @@ def add_dashes(*names):
     return result
 
 
-# From gdb --help and man gdb.
-GDB_FLAGS = add_dashes(
-    "batch",
-    "batch-silent",
-    "configuration",
-    "dbx",
-    "f",
-    "fullname",
-    "n",
-    "nh",
-    "nw",
-    "nx",
-    "q",
-    "quiet",
-    "readnever",
-    "readnow",
-    "return-child-result",
-    "silent",
-    "tui",
-    "w",
-    "write",
-)
-GDB_OPTIONS = add_dashes(
-    "D",
-    "b",
-    "c",
-    "cd",
-    "command",
-    "core",
-    "core",
-    "d",
-    "data-directory",
-    "directory",
-    "e",
-    "eval-command",
-    "ex",
-    "exec",
-    "iex",
-    "init-command",
-    "init-eval-command",
-    "interpreter",
-    "ix",
-    "l",
-    "pid",
-    "s",
-    "se",
-    "symbols",
-    "tty",
-    "x",
-)
+class Gdb:
+    DISPLAY_NAME = "GDB"
+    # From gdb --help and man gdb.
+    FLAGS = add_dashes(
+        "batch",
+        "batch-silent",
+        "configuration",
+        "dbx",
+        "f",
+        "fullname",
+        "n",
+        "nh",
+        "nw",
+        "nx",
+        "q",
+        "quiet",
+        "readnever",
+        "readnow",
+        "return-child-result",
+        "silent",
+        "tui",
+        "w",
+        "write",
+    )
+    OPTIONS = add_dashes(
+        "D",
+        "b",
+        "c",
+        "cd",
+        "command",
+        "core",
+        "core",
+        "d",
+        "data-directory",
+        "directory",
+        "e",
+        "eval-command",
+        "ex",
+        "exec",
+        "iex",
+        "init-command",
+        "init-eval-command",
+        "interpreter",
+        "ix",
+        "l",
+        "pid",
+        "s",
+        "se",
+        "symbols",
+        "tty",
+        "x",
+    )
+
+    def gen_argv(self, pid):
+        return [
+            "gdb",
+            "-p",
+            str(pid),
+            # When attaching to a SIGSTOPped process, gdb receives an event
+            # that indicates that the process got a SIGSTOP. It then passes
+            # this signal to the process after each resumption, making
+            # debugging impossible. Maybe this should be reported?
+            "-ex",
+            "handle SIGSTOP nostop noprint nopass",
+        ]
+
+    def resume(self, pid):
+        pass
+
+
+class Strace:
+    DISPLAY_NAME = "strace"
+    # From strace --help and man strace.
+    FLAGS = add_dashes(
+        "A",
+        "C",
+        "D",
+        "DD",
+        "DDD",
+        "F",
+        "T",
+        "Z",
+        "c",
+        "d",
+        "debug",
+        "f",
+        "ff",
+        "i",
+        "instruction-pointer",
+        "k",
+        "no-abbrev",
+        "output-append-mode",
+        "q",
+        "qq",
+        "r",
+        "seccomp-bpf",
+        "stack-traces",
+        "summary",
+        "summary-only",
+        "summary-wall-clock",
+        "t",
+        "tt",
+        "ttt",
+        "v",
+        "w",
+        "x",
+        "xx",
+        "y",
+        "yy",
+        "z",
+    )
+    OPTIONS = add_dashes(
+        "E",
+        "I",
+        "O",
+        "P",
+        "S",
+        "X",
+        "a",
+        "abbrev",
+        "attach",
+        "b",
+        "columns",
+        "const-print-style",
+        "detach-on",
+        "e",
+        "env",
+        "fault",
+        "inject",
+        "kvm",
+        "o",
+        "output",
+        "p",
+        "raw",
+        "read",
+        "s",
+        "s",
+        "signal",
+        "status",
+        "string-limit",
+        "summary-sort-by",
+        "trace",
+        "trace-path",
+        "u",
+        "user",
+        "verbose",
+        "write",
+    )
+
+    def gen_argv(self, pid):
+        return ["strace", "-p", str(pid)]
+
+    def resume(self, pid):
+        while True:
+            try:
+                with open(f"/proc/{pid}/stat") as fp:
+                    s = fp.readline()
+            except FileNotFoundError:
+                break
+            comm_end = s.rfind(")")
+            if comm_end == -1:
+                break
+            if s[comm_end : comm_end + 4] == ") t ":
+                os.kill(pid, signal.SIGCONT)
+                break
 
 
 def get_val(i):
@@ -304,11 +422,17 @@ def resolve_uid(s):
         return getpwnam(s)[2]
 
 
-def parse_argv():
-    async_ = False
-    fork = False
-    uid = None
-    gdb_args = []
+@dataclass
+class Args:
+    async_: bool = False
+    fork: bool = False
+    uid: int = 0xFFFFFFFF
+    tool_args: List[str] = field(default_factory=list)
+    tool: Any = field(default_factory=Gdb)
+
+
+def parse_argv() -> Tuple[Args, str, List[str]]:
+    args = Args()
     i = 1
     while i < len(sys.argv):
         arg = sys.argv[i]
@@ -316,26 +440,31 @@ def parse_argv():
             print_help(sys.stdout)
             sys.exit(0)
         elif arg == "--async":
-            async_ = True
+            args.async_ = True
             i += 1
         elif arg == "--fork":
-            fork = True
+            args.fork = True
             i += 1
         elif arg.startswith("--uid="):
-            uid = resolve_uid(arg[6:])
+            args.uid = resolve_uid(arg[6:])
             i += 1
         elif arg == "--uid":
-            uid = resolve_uid(get_val(i))
+            args.uid = resolve_uid(get_val(i))
             i += 2
-        elif arg in GDB_FLAGS or ("=" in arg and arg[: arg.index("=")] in GDB_OPTIONS):
-            gdb_args.append(arg)
+        elif arg in args.tool.FLAGS or (
+            "=" in arg and arg[: arg.index("=")] in args.tool.OPTIONS
+        ):
+            args.tool_args.append(arg)
             i += 1
-        elif arg in GDB_OPTIONS:
-            gdb_args.append(arg)
-            gdb_args.append(get_val(i))
+        elif arg in args.tool.OPTIONS:
+            args.tool_args.append(arg)
+            args.tool_args.append(get_val(i))
             i += 2
+        elif arg == "--strace":
+            args.tool = Strace()
+            i += 1
         else:
-            return async_, fork, uid, gdb_args, arg, sys.argv[i + 1 :]
+            return args, arg, sys.argv[i + 1 :]
     print_help(sys.stderr)
     sys.exit(1)
 
@@ -350,10 +479,10 @@ def print_skip_non_matching(pid, filtered_by):
 def main():
     check_system_requirements()
 
-    async_, fork, uid, gdb_args, name, args = parse_argv()
+    args, name, rest = parse_argv()
 
     cmdline_needle = b"\0"
-    for arg in args:
+    for arg in rest:
         cmdline_needle += arg.encode() + b"\0"
 
     try:
@@ -369,13 +498,13 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
                 file=sys.stderr,
             )
         sys.exit(1)
-    bpf["uid_map"][0] = ctypes.c_uint32(0xFFFFFFFF if uid is None else uid)
+    bpf["uid_map"][0] = ctypes.c_uint32(args.uid)
     comm_bytes = name[: TASK_COMM_LEN - 1].encode() + b"\0"
     key = Key(prefixlen=len(comm_bytes) * 8, data=COMM_T(*comm_bytes))
     bpf["comms_map"][key] = ctypes.c_uint8(0)
     bpf["cmdline_len_map"][0] = ctypes.c_uint32(len(cmdline_needle))
     bpf["cmdline_hash_map"][0] = ctypes.c_uint64(sum(cmdline_needle))
-    if fork:
+    if args.fork:
         # schedule_tail - first thing a freshly forked thread must call.
         bpf.attach_kretprobe(event="schedule_tail", fn_name="schedule_tail_retprobe")
     else:
@@ -431,28 +560,21 @@ sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
                 print_skip_non_matching(pid, "Python")
                 os.kill(pid, signal.SIGCONT)
                 continue
-            gdb_argv = [
-                "gdb",
-                "-p",
-                str(pid),
-                # When attaching to a SIGSTOPped process, gdb receives an event
-                # that indicates that the process got a SIGSTOP. It then passes
-                # this signal to the process after each resumption, making
-                # debugging impossible. Maybe this should be reported?
-                "-ex",
-                "handle SIGSTOP nostop noprint nopass",
-            ] + gdb_args
-            gdb_cmdline = " ".join(shlex.quote(gdb_arg) for gdb_arg in gdb_argv)
-            print(f"Starting {gdb_cmdline}...", file=sys.stderr)
-            if async_:
-                subprocess.Popen(["x-terminal-emulator", "--"] + gdb_argv)
+            tool_argv = args.tool.gen_argv(pid) + args.tool_args
+            tool_cmdline = " ".join(shlex.quote(gdb_arg) for gdb_arg in tool_argv)
+            print(f"Starting {tool_cmdline}...", file=sys.stderr)
+            if args.async_:
+                subprocess.Popen(["x-terminal-emulator", "--"] + tool_argv)
+                args.tool.resume(pid)
             else:
                 sigint_handler.raise_keyboard_interrupt = False
                 try:
-                    subprocess.call(gdb_argv)
+                    p = subprocess.Popen(tool_argv)
+                    args.tool.resume(pid)
+                    p.wait()
                 finally:
                     sigint_handler.raise_keyboard_interrupt = True
-            print(f"GDB exited.", file=sys.stderr)
+            print(f"{args.tool.DISPLAY_NAME} exited.", file=sys.stderr)
         pids.clear()
 
 
