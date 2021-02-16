@@ -18,7 +18,8 @@ PROJECT = "gdb-pounce"
 REQUIRED_SYSTEM = "Linux"
 REQUIRED_RELEASE = "5.3"
 REQUIRED_BCC_VERSION = "0.11.0"
-TEXT = r"""#include <linux/sched.h>
+TEXT = r"""#include <linux/mm_types.h>
+#include <linux/sched.h>
 #include <uapi/linux/bpf.h>
 #include <uapi/linux/ptrace.h>
 #include <uapi/linux/signal.h>
@@ -491,10 +492,11 @@ def main():
         print(file=sys.stderr)
         traceback.print_exc()
         if os.getuid() != 0:
+            suggestion = " ".join(shlex.quote(arg) for arg in sys.argv)
             print(
                 f"""
 Are you root? Do you have CAP_SYS_ADMIN / CAP_BPF? Try this:
-sudo env \"PATH=$PATH\" {shlex.join(sys.argv)}""",
+sudo env \"PATH=$PATH\" {suggestion}""",
                 file=sys.stderr,
             )
         sys.exit(1)
