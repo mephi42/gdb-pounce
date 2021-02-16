@@ -1,7 +1,27 @@
-#!/bin/bash
-set -e -u -x -o pipefail
-py=(gdb-pounce setup.py test/test.py)
-c=(test/hello.c)
-isort "${py[@]}"
-black "${py[@]}"
-clang-format -i "${c[@]}"
+#!/usr/bin/env python3
+from subprocess import check_call, check_output
+
+PY = ["fmt", "gdb-pounce", "setup.py", "test/test.py"]
+C = ["test/hello.c"]
+
+
+def main():
+    with open("gdb-pounce") as fp:
+        source = fp.read()
+    text_prefix = 'TEXT = r"""'
+    text_suffix = '"""'
+    text_start = source.index(text_prefix) + len(text_prefix)
+    text_end = source.index(text_suffix, text_start)
+    formatted = check_output(
+        ["clang-format", "-style={BreakBeforeBraces: Linux, IndentWidth: 4}"],
+        input=source[text_start:text_end].encode(),
+    ).decode()
+    with open("gdb-pounce", "w") as fp:
+        fp.write(source[:text_start] + formatted + source[text_end:])
+    check_call(["isort"] + PY)
+    check_call(["black"] + PY)
+    check_call(["clang-format", "-i"] + C)
+
+
+if __name__ == "__main__":
+    main()
