@@ -40,7 +40,7 @@ and we need to debug its initialization.
 Prerequisites
 =============
 
-* `bcc <https://github.com/iovisor/bcc>`_ ``>= 0.11.0``
+* `bcc <https://github.com/iovisor/bcc>`_ ``>= 0.15.0``
 * `gdb <https://www.gnu.org/software/gdb/>`_
 * `linux kernel <https://www.kernel.org/>`_ ``>= 5.3``
 * `python3 <https://www.python.org/>`_ ``>= 3.7``

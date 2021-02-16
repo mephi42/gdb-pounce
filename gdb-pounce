@@ -17,7 +17,9 @@ import bcc
 PROJECT = "gdb-pounce"
 REQUIRED_SYSTEM = "Linux"
 REQUIRED_RELEASE = "5.3"
-REQUIRED_BCC_VERSION = "0.11.0"
+REQUIRED_BCC_VERSION = "0.15.0"
+DEBIAN_BCC_REPO = "https://salsa.debian.org/debian/bpfcc.git"
+DEBIAN_BCC_TAG = "debian/0.16.0-3"
 TEXT = r"""#include <linux/mm_types.h>
 #include <linux/sched.h>
 #include <uapi/linux/bpf.h>
@@ -35,7 +37,7 @@ struct __attribute__((__packed__)) event {
     int bpf_send_signal_ret;
 };
 
-#define XARG_MAX 2500
+#define XARG_MAX 2000
 
 BPF_ARRAY(uid_map, u32, 1);
 BPF_LPM_TRIE(comms_map, struct key, u8);
@@ -64,11 +66,12 @@ static bool cmdline_may_match()
     if (cmdline_len == NULL || *cmdline_len > XARG_MAX)
         return true;
     t = (struct task_struct *)bpf_get_current_task();
-    if (bpf_probe_read(&mm, sizeof(mm), &t->mm) != 0)
+    if (bpf_probe_read_kernel(&mm, sizeof(mm), &t->mm) != 0)
         return true;
-    if (bpf_probe_read(&arg_start, sizeof(arg_start), &mm->arg_start) != 0)
+    if (bpf_probe_read_kernel(&arg_start, sizeof(arg_start), &mm->arg_start) !=
+        0)
         return true;
-    if (bpf_probe_read(&arg_end, sizeof(arg_end), &mm->arg_end) != 0)
+    if (bpf_probe_read_kernel(&arg_end, sizeof(arg_end), &mm->arg_end) != 0)
         return true;
     if (arg_end < arg_start)
         return true;
@@ -76,15 +79,19 @@ static bool cmdline_may_match()
     if (len > XARG_MAX)
         return true;
 
-    for (i = 0; i < len && i < XARG_MAX; i++) {
+    /* Always process XARG_MAX bytes in order to make the loop analysis easier
+     * for the verifier. */
+    for (i = 0; i < XARG_MAX; i++) {
         if (i >= *cmdline_len) {
-            bpf_probe_read(&c, 1, arg_start + i - *cmdline_len);
+            if (bpf_probe_read_user(&c, 1, arg_start + i - *cmdline_len) != 0)
+                return i < len;
             hash -= c;
         }
-        bpf_probe_read(&c, 1, arg_start + i);
+        if (bpf_probe_read_user(&c, 1, arg_start + i) != 0)
+            return i < len;
         hash += c;
         if (hash == *cmdline_hash)
-            return true;
+            return i < len;
     }
 
     return false;
@@ -192,8 +199,21 @@ def check_system_requirements():
     actual_bcc_version = bcc.__version__
     if version_is_less(actual_bcc_version, REQUIRED_BCC_VERSION):
         print(
-            f"Please upgrade bcc: you have {actual_bcc_version}, "
-            f"but {PROJECT} requires {REQUIRED_BCC_VERSION}",
+            rf"""Please upgrade bcc: you have {actual_bcc_version}, but {PROJECT} requires {REQUIRED_BCC_VERSION}
+
+On Debian/Ubuntu, try this:
+
+    git clone --branch={DEBIAN_BCC_TAG} {DEBIAN_BCC_REPO}
+    cd bpfcc
+    # Add -d to the below in order to ignore the missing debhelper-compat.
+    gbp buildpackage \
+        --git-builder="debuild --set-envvar=DPKG_GENSYMBOLS_CHECK_LEVEL=0 -i -I" \
+        --git-export-dir=build \
+        --git-ignore-branch \
+        --unsigned-changes \
+        --unsigned-source
+    sudo dpkg -i build/*.deb
+""",
             file=sys.stderr,
         )
         sys.exit(1)
