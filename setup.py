@@ -6,7 +6,7 @@ with open(os.path.join(os.path.dirname(__file__), "README.rst")) as fp:
     long_description = fp.read()
 setuptools.setup(
     name="gdb-pounce",
-    version="0.0.8",
+    version="0.0.9",
     author="mephi42",
     author_email="mephi42@gmail.com",
     description="attach to a process precisely after a successful "
