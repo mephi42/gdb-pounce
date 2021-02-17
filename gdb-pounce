@@ -12,7 +12,18 @@ from dataclasses import dataclass, field
 from pwd import getpwnam
 from typing import Any, List, Tuple
 
-import bcc
+try:
+    import bcc
+except ImportError:
+    print(
+        fr"""Please install bcc
+
+On Debian/Ubuntu, try this:
+
+    sudo apt install python3-bpfcc
+"""
+    )
+    sys.exit(1)
 
 PROJECT = "gdb-pounce"
 REQUIRED_SYSTEM = "Linux"
