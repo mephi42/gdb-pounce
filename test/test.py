@@ -191,6 +191,21 @@ class GdbPounceTestCase(TestCase):
                 self.expect_line(gdb_pounce.stderr, b"+++ exited with 0 +++\n")
                 self.expect_strace_exited(gdb_pounce)
 
+    def test_symlink(self):
+        symlink_path = os.path.join(self.workdir, "hello2")
+        os.symlink("hello", symlink_path)
+        try:
+            with self.popen_gdb_pounce(TEST_GDB_ARGS + ["hello2"]) as gdb_pounce:
+                exe = Popen([symlink_path], stdout=PIPE)
+                self.expect_starting(gdb_pounce, TEST_GDB_ARGS_STR, exe)
+                try:
+                    self.assertEqual(HELLO_WORLD, exe.stdout.read())
+                finally:
+                    self.assertEqual(0, exe.wait())
+                    exe.stdout.close()
+        finally:
+            os.unlink(symlink_path)
+
 
 if __name__ == "__main__":
     main()

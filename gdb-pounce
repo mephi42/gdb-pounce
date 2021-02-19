@@ -588,8 +588,12 @@ sudo env \"PATH=$PATH\" {suggestion}""",
             except FileNotFoundError:
                 print(f"Skipping nonexistent pid {pid}...", file=sys.stderr)
                 continue
-            cmdline = cmdline[cmdline.index(b"\0") :]
-            if os.path.basename(exe) != name or cmdline_needle not in cmdline:
+            cmdline_i = cmdline.index(b"\0")
+            argv0, cmdline = cmdline[:cmdline_i], cmdline[cmdline_i:]
+            if (
+                os.path.basename(exe) != name
+                and os.path.basename(argv0) != name.encode()
+            ) or cmdline_needle not in cmdline:
                 print_skip_non_matching(pid, "Python")
                 os.kill(pid, signal.SIGCONT)
                 continue
