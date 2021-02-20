@@ -42,7 +42,10 @@ Prerequisites
 
 * `bcc <https://github.com/iovisor/bcc>`_ ``>= 0.15.0``
 * `gdb <https://www.gnu.org/software/gdb/>`_
-* `linux kernel <https://www.kernel.org/>`_ ``>= 5.3``
+* `linux kernel <https://www.kernel.org/>`_ ``>= 5.3`` (``>= 5.5`` for the
+  container support)
+* `nsenter <https://www.kernel.org/pub/linux/utils/util-linux/>`_ (for the
+  container support, optional)
 * `python3 <https://www.python.org/>`_ ``>= 3.7``
 
 pounce?

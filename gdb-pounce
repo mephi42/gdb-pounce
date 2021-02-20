@@ -269,6 +269,23 @@ def add_dashes(*names):
     return result
 
 
+def linux_ns_id(pid, ns):
+    try:
+        st = os.stat(f"/proc/{pid}/ns/{ns}")
+    except FileNotFoundError:
+        return None
+    return st.st_dev, st.st_ino
+
+
+def linux_ns_pid(pid):
+    prefix = "NSpid:"
+    with open(f"/proc/{pid}/status") as fp:
+        for s in fp:
+            if s.startswith(prefix):
+                return int(s[len(prefix) :].split()[-1])
+    return None
+
+
 class Gdb:
     DISPLAY_NAME = "GDB"
     # From gdb --help and man gdb.
@@ -323,17 +340,52 @@ class Gdb:
     )
 
     def gen_argv(self, pid):
-        return [
-            "gdb",
-            "-p",
-            str(pid),
-            # When attaching to a SIGSTOPped process, gdb receives an event
-            # that indicates that the process got a SIGSTOP. It then passes
-            # this signal to the process after each resumption, making
-            # debugging impossible. Maybe this should be reported?
-            "-ex",
-            "handle SIGSTOP nostop noprint nopass",
-        ]
+        argv = []
+        if linux_ns_id(os.getpid(), "pid") != linux_ns_id(pid, "pid"):
+            # Try to prevent "warning: Target and debugger are in different PID
+            # namespaces".
+            ns_pid = linux_ns_pid(pid)
+            if ns_pid is None:
+                print(
+                    "Kernel does not support NSpid - attaching with the host GDB...",
+                    file=sys.stderr,
+                )
+            else:
+                nsenter = "nsenter", "-a", "-t", str(pid)
+                try:
+                    subprocess.check_call(
+                        nsenter + ("gdb", "-batch"),
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except FileNotFoundError:
+                    print(
+                        "nsenter is not installed on the host - attaching with the host GDB...",
+                        file=sys.stderr,
+                    )
+                except subprocess.CalledProcessError:
+                    print(
+                        "GDB is not installed in the container - attaching with the host GDB...",
+                        file=sys.stderr,
+                    )
+                else:
+                    argv.extend(nsenter)
+                    pid = ns_pid
+        argv.extend(
+            (
+                "gdb",
+                "-p",
+                str(pid),
+                # When attaching to a SIGSTOPped process, gdb receives an event
+                # that indicates that the process got a SIGSTOP. It then passes
+                # this signal to the process after each resumption, making
+                # debugging impossible. Maybe this should be reported?
+                "-ex",
+                "handle SIGSTOP nostop noprint nopass",
+            )
+        )
+        return argv
 
     def resume(self, pid):
         pass
