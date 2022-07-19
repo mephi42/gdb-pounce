@@ -21,6 +21,10 @@ except ImportError:
 On Debian/Ubuntu, try this:
 
     sudo apt install python3-bpfcc
+
+On Fedora, try this:
+
+    sudo dnf install python3-bcc
 """
     )
     sys.exit(1)
