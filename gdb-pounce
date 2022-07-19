@@ -673,7 +673,12 @@ sudo env \"PATH=$PATH\" {suggestion}""",
             tool_cmdline = " ".join(shlex.quote(gdb_arg) for gdb_arg in tool_argv)
             print(f"Starting {tool_cmdline}...", file=sys.stderr)
             if args.async_:
-                subprocess.Popen(["x-terminal-emulator", "--"] + tool_argv)
+                if "TMUX" in os.environ:
+                    subprocess.check_call(
+                        ["tmux", "new-window", "-n", str(pid), tool_cmdline]
+                    )
+                else:
+                    subprocess.Popen(["x-terminal-emulator", "--"] + tool_argv)
                 args.tool.resume(pid)
             else:
                 sigint_handler.raise_keyboard_interrupt = False
@@ -682,9 +687,9 @@ sudo env \"PATH=$PATH\" {suggestion}""",
                     args.tool.resume(pid)
                     p.wait()
                 finally:
+                    print(f"{args.tool.DISPLAY_NAME} exited.", file=sys.stderr)
                     args.tool.cleanup(pid)
                     sigint_handler.raise_keyboard_interrupt = True
-            print(f"{args.tool.DISPLAY_NAME} exited.", file=sys.stderr)
         pids.clear()
 
 

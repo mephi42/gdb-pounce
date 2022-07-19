@@ -211,10 +211,12 @@ class GdbPounceTestCase(TestCase):
             ["-nx", "-batch", "-ex", "q", "hello"]
         ) as gdb_pounce:
             with self.popen_hello([]):
-                self.expect_line(
-                    gdb_pounce.stderr,
-                    b"GDB left the process stopped - sending SIGCONT...\n",
-                )
+                pass
+            self.expect_gdb_exited(gdb_pounce)
+            self.expect_line(
+                gdb_pounce.stderr,
+                b"GDB left the process stopped - sending SIGCONT...\n",
+            )
 
 
 if __name__ == "__main__":
