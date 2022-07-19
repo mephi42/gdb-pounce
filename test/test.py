@@ -206,6 +206,16 @@ class GdbPounceTestCase(TestCase):
         finally:
             os.unlink(symlink_path)
 
+    def test_quit(self):
+        with self.popen_gdb_pounce(
+            ["-nx", "-batch", "-ex", "q", "hello"]
+        ) as gdb_pounce:
+            with self.popen_hello([]):
+                self.expect_line(
+                    gdb_pounce.stderr,
+                    b"GDB left the process stopped - sending SIGCONT...\n",
+                )
+
 
 if __name__ == "__main__":
     main()

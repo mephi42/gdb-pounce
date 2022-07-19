@@ -3,6 +3,7 @@ import ctypes
 import itertools
 import os
 import platform
+import re
 import shlex
 import signal
 import subprocess
@@ -290,6 +291,18 @@ def linux_ns_pid(pid):
     return None
 
 
+def proc_state(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as fp:
+            s = fp.readline()
+    except FileNotFoundError:
+        return None
+    m = re.search(r"\) (.) ", s)
+    if m is None:
+        return m
+    return m.group(1)
+
+
 class Gdb:
     DISPLAY_NAME = "GDB"
     # From gdb --help and man gdb.
@@ -394,6 +407,11 @@ class Gdb:
     def resume(self, pid):
         pass
 
+    def cleanup(self, pid):
+        if proc_state(pid) == "T":
+            print("GDB left the process stopped - sending SIGCONT...", file=sys.stderr)
+            os.kill(pid, signal.SIGCONT)
+
 
 class Strace:
     DISPLAY_NAME = "strace"
@@ -479,17 +497,15 @@ class Strace:
 
     def resume(self, pid):
         while True:
-            try:
-                with open(f"/proc/{pid}/stat") as fp:
-                    s = fp.readline()
-            except FileNotFoundError:
+            state = proc_state(pid)
+            if state is None:
                 break
-            comm_end = s.rfind(")")
-            if comm_end == -1:
-                break
-            if s[comm_end : comm_end + 4] == ") t ":
+            if state == "t":
                 os.kill(pid, signal.SIGCONT)
                 break
+
+    def cleanup(self, pid):
+        pass
 
 
 def get_val(i):
@@ -666,6 +682,7 @@ sudo env \"PATH=$PATH\" {suggestion}""",
                     args.tool.resume(pid)
                     p.wait()
                 finally:
+                    args.tool.cleanup(pid)
                     sigint_handler.raise_keyboard_interrupt = True
             print(f"{args.tool.DISPLAY_NAME} exited.", file=sys.stderr)
         pids.clear()
