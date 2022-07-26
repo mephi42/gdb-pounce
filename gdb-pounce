@@ -356,7 +356,7 @@ class Gdb:
         "x",
     )
 
-    def gen_argv(self, pid):
+    def gen_argv(self, args, pid):
         argv = []
         if linux_ns_id(os.getpid(), "pid") != linux_ns_id(pid, "pid"):
             # Try to prevent "warning: Target and debugger are in different PID
@@ -389,6 +389,28 @@ class Gdb:
                 else:
                     argv.extend(nsenter)
                     pid = ns_pid
+
+                    if args.async_:
+                        setsid = "setsid", "-c"
+                        try:
+                            subprocess.check_call(nsenter + setsid + ("true",))
+                        except subprocess.CalledProcessError:
+                            print(
+                                "setsid is not installed in the container - Ctrl+C will terminate GDB...",
+                                file=sys.stderr,
+                            )
+                        else:
+                            argv.extend(setsid)
+                    else:
+                        # Using setsid with --async is fine, because we don't
+                        # care what happens after GDB exits. Without --async,
+                        # setsid will take away our controlling terminal and
+                        # will not give it back, breaking Ctrl+C.
+                        print(
+                            "Not using setsid without --async - Ctrl+C may break...",
+                            file=sys.stderr,
+                        )
+
         argv.extend(
             (
                 "gdb",
@@ -492,7 +514,7 @@ class Strace:
         "write",
     )
 
-    def gen_argv(self, pid):
+    def gen_argv(self, args, pid):
         return ["strace", "-p", str(pid)]
 
     def resume(self, pid):
@@ -669,7 +691,7 @@ sudo env \"PATH=$PATH\" {suggestion}""",
                 print_skip_non_matching(pid, "Python")
                 os.kill(pid, signal.SIGCONT)
                 continue
-            tool_argv = args.tool.gen_argv(pid) + args.tool_args
+            tool_argv = args.tool.gen_argv(args, pid) + args.tool_args
             tool_cmdline = " ".join(shlex.quote(gdb_arg) for gdb_arg in tool_argv)
             print(f"Starting {tool_cmdline}...", file=sys.stderr)
             if args.async_:
