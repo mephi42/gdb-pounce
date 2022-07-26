@@ -390,26 +390,18 @@ class Gdb:
                     argv.extend(nsenter)
                     pid = ns_pid
 
-                    if args.async_:
-                        setsid = "setsid", "-c"
-                        try:
-                            subprocess.check_call(nsenter + setsid + ("true",))
-                        except subprocess.CalledProcessError:
-                            print(
-                                "setsid is not installed in the container - Ctrl+C will terminate GDB...",
-                                file=sys.stderr,
-                            )
-                        else:
-                            argv.extend(setsid)
-                    else:
-                        # Using setsid with --async is fine, because we don't
-                        # care what happens after GDB exits. Without --async,
-                        # setsid will take away our controlling terminal and
-                        # will not give it back, breaking Ctrl+C.
+                    # Use sh -i instead of setsid, since it restores the
+                    # controlling tty.
+                    setsid = "sh", "-i", "-c", "$@", "--"
+                    try:
+                        subprocess.check_call(nsenter + setsid + ("true",))
+                    except subprocess.CalledProcessError:
                         print(
-                            "Not using setsid without --async - Ctrl+C may break...",
+                            "sh is not installed in the container - Ctrl+C will terminate GDB...",
                             file=sys.stderr,
                         )
+                    else:
+                        argv.extend(setsid)
 
         argv.extend(
             (
