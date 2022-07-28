@@ -390,14 +390,19 @@ class Gdb:
                     argv.extend(nsenter)
                     pid = ns_pid
 
-                    # Use sh -i instead of setsid, since it restores the
+                    # Use bash -i instead of setsid, since it restores the
                     # controlling tty.
-                    setsid = "sh", "-i", "-c", '"$@"', "--"
+                    setsid = "bash", "-i", "-c", '"$@"', "--"
                     try:
-                        subprocess.check_call(nsenter + setsid + ("true",))
+                        subprocess.check_call(
+                            nsenter + setsid + ("true",),
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
                     except subprocess.CalledProcessError:
                         print(
-                            "sh is not installed in the container - Ctrl+C will terminate GDB...",
+                            "bash is not installed in the container - Ctrl+C will terminate GDB...",
                             file=sys.stderr,
                         )
                     else:
