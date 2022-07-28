@@ -392,7 +392,7 @@ class Gdb:
 
                     # Use sh -i instead of setsid, since it restores the
                     # controlling tty.
-                    setsid = "sh", "-i", "-c", "$@", "--"
+                    setsid = "sh", "-i", "-c", '"$@"', "--"
                     try:
                         subprocess.check_call(nsenter + setsid + ("true",))
                     except subprocess.CalledProcessError:
