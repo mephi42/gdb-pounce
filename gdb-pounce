@@ -50,7 +50,7 @@ struct key {
 struct __attribute__((__packed__)) event {
     u32 pid;
     u8 skipped;
-    int bpf_send_signal_ret;
+    long bpf_send_signal_ret;
 };
 
 #define XARG_MAX 2000
